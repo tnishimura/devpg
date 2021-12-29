@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -e
+set -u
+
+init_script=
+password=nyan
+tmp_directory=/tmp/devpg-$$/
+port=15432
+mount_directory=/docker-entrypoint-initdb.d
+container_id=
+
+usage () {
+    cat <<'END'
+Usage:
+    devpg [OPTION]...
+
+Options:
+    -h, --help
+    -i, --init-script=FILENAME   initialize the database with some sql
+    -p, --port=INT               local port (default: 15432)
+    -P, --password=STRING        database password (default: password)
+    -t, --tmp-directory=DIRNAME  temporary directory (default: /tmp/devpg-$PID)
+
+For more info: https://github.com/tnishimura/devpg
+END
+    exit 1
+}
+
+preflight_checks () {
+    if [[ -n $init_script ]] && [[ ! -f $init_script ]] 
+    then
+        echo "Cannot find initialization script file $init_script"
+        exit 1
+    fi
+
+    # check that docker is available
+    if ! hash docker 2> /dev/null
+    then
+        echo "docker not found"
+        exit 1
+    fi
+
+    # check that psql is available
+    if ! hash psql 2> /dev/null
+    then
+        echo "psql not found, please install it"
+        echo "On CentOS: yum install postgresql"
+        echo "On Debian/Ubuntu: apt install postgresql-client"
+        echo "On Arch: pacman -S postgresql"
+        exit 1
+    fi
+}
+
+setup_init_script () {
+    if [[ -n $init_script ]]
+    then
+        echo "Setting up init script..."
+        mkdir -p $tmp_directory
+        cp $init_script $tmp_directory/init.sql
+        cat <<'END' >> $tmp_directory/init.sh
+#!/bin/bash
+set -e
+
+psql -v ON_ERROR_STOP=1 --username "postgres" --dbname "postgres" /docker-entrypoint-initdb.d/init.sql
+END
+    fi
+
+}
+
+start_container () {
+    echo "Starting postgresql container..."
+    volume=""
+    if [[ -n $init_script ]]
+    then
+        volume="-v $tmp_directory:$mount_directory"
+    fi
+    container_id=`docker run -d -e POSTGRES_PASSWORD=$password -p $port:5432 $volume postgres`
+    
+    if [[ $? -ne 0 ]]
+    then
+        echo "Failed to launch postgres container, maybe port in use? Output:"
+        echo $container_id
+        # clear it so cleanup doesn't try to remove containers that weren't created
+        container=
+        exit 1
+    fi
+}
+
+cleanup () {
+    if [[ -n $container_id ]]
+    then
+        echo "removing container..."
+        docker container stop $container_id  > /dev/null
+        docker container rm $container_id > /dev/null
+    fi
+}
+
+connect_with_psql () {
+    export PGPASSWORD=$password
+    echo "Sleeping 5 seconds to give time for docker pg to start..."
+    sleep 5
+    psql -h localhost -p $port -U postgres postgres
+}
+
+while [[ $# -gt 0 ]]; do
+    key="$1"
+
+    case $key in
+        -h|--help)
+            usage
+            ;;
+        -P|--password)
+            password="$2"
+            shift
+            shift
+            ;;
+        -p|--port)
+            port="$2"
+            shift
+            shift
+            ;;
+        -i|--init-script)
+            init_script="$2"
+            shift
+            shift
+            ;;
+        -t|--tmp-directory)
+            tmp_directory="$2"
+            shift 
+            shift
+            ;;
+        *)    
+            usage
+            ;;
+    esac
+done
+
+trap cleanup EXIT
+
+preflight_checks
+setup_init_script
+start_container
+connect_with_psql
+
