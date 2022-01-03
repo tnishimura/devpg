@@ -6,7 +6,7 @@ Launch a temporary, development instance of Postgresql on demand
 
 `devpg` is a small script which:
 * automates the process of launching a PostgreSQL Docker container
-* initializes the database with an optional SQL file
+* initializes the database with an optional SQL files
 * opens a `psql` session and handles 
 * handles cleanup of the container 
 
@@ -27,6 +27,7 @@ To install, simply place the `devpg` script somewhere in your `$PATH`.
     Options:
         -h, --help
         -i, --init-script=FILENAME   initialize the database with some sql
+                                     (may be repeated)
         -p, --port=INT               local port (default: 15432)
         -P, --password=STRING        database password (default: password)
         -t, --tmp-directory=DIRNAME  temporary directory (default: /tmp/devpg-$PID)
@@ -36,4 +37,27 @@ You can also connect to the instance from any application on localhost with the 
 
 Additionally, you can provide an SQL initialization script using `-i`. 
 You can place DDL statements (`create table`, etc) and sample data (using `insert`) in this file to quickly test your application against your schema. 
-A small sample database `sample.sql` is included to show its functionality.
+A small sample database `sample/schema.sql` is included to show its functionality.
+
+You can also specify multiple init scripts with `-i` so that you can split the schema and sample data. Init scripts will be applied in the order specified.
+
+## Example
+
+Let's say you have a schema in `sample/schema.sql`:
+
+    create table your_awesome_table (first_name text, last_name text);
+
+And some sample data in `sample/data.sql`:
+
+    insert into your_awesome_table (first_name, last_name) 
+    values ('Ada', 'Lovelace'), ('Charles', 'Babbage');
+
+You can them run this script as:
+
+    devpg -i sample/schema.sql -i sample/data.sql 
+
+This will automatically launch an instance of postgres in a container and open a psql session. You'll also be able to connect to the instance with any other client (for example, your application server on localhost with the port and password specified.)
+
+# License
+
+MIT
