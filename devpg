@@ -2,8 +2,8 @@
 set -e
 set -u
 
-init_script=
-password=nyan
+init_script=()
+password=password
 tmp_directory=/tmp/devpg-$$/
 port=15432
 mount_directory=/docker-entrypoint-initdb.d
@@ -11,12 +11,15 @@ container_id=
 
 usage () {
     cat <<'END'
+devpg launches a temporary, development instance of Postgresql 
+
 Usage:
     devpg [OPTION]...
 
 Options:
     -h, --help
     -i, --init-script=FILENAME   initialize the database with some sql
+                                 (may be repeated)
     -p, --port=INT               local port (default: 15432)
     -P, --password=STRING        database password (default: password)
     -t, --tmp-directory=DIRNAME  temporary directory (default: /tmp/devpg-$PID)
@@ -27,11 +30,14 @@ END
 }
 
 preflight_checks () {
-    if [[ -n $init_script ]] && [[ ! -f $init_script ]] 
-    then
-        echo "Cannot find initialization script file $init_script"
-        exit 1
-    fi
+    for s in ${init_script[@]}
+    do
+        if [[ -n $s ]] && [[ ! -f $s ]] 
+        then
+            echo "Cannot find initialization script file $s"
+            exit 1
+        fi
+    done 
 
     # check that docker is available
     if ! hash docker 2> /dev/null
@@ -52,25 +58,31 @@ preflight_checks () {
 }
 
 setup_init_script () {
-    if [[ -n $init_script ]]
+    if [[ ${#init_script[@]} > 0 ]] 
     then
-        echo "Setting up init script..."
+        echo "Setting up init script (in $tmp_directory)..."
         mkdir -p $tmp_directory
-        cp $init_script $tmp_directory/init.sql
-        cat <<'END' >> $tmp_directory/init.sh
+        cat <<'END' > $tmp_directory/init.sh
 #!/bin/bash
 set -e
-
-psql -v ON_ERROR_STOP=1 --username "postgres" --dbname "postgres" /docker-entrypoint-initdb.d/init.sql
 END
-    fi
 
+        counter=1
+        for s in ${init_script[@]}
+        do
+            cp $s $tmp_directory/init-$counter.sql
+            cat <<END >> $tmp_directory/init.sh
+psql -v ON_ERROR_STOP=1 --username "postgres" --dbname "postgres" /docker-entrypoint-initdb.d/init-$counter.sql
+END
+            counter=$((counter+1))
+        done 
+    fi
 }
 
 start_container () {
     echo "Starting postgresql container..."
     volume=""
-    if [[ -n $init_script ]]
+    if [[ ${#init_script[@]} > 0 ]] 
     then
         volume="-v $tmp_directory:$mount_directory"
     fi
@@ -120,7 +132,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -i|--init-script)
-            init_script="$2"
+            init_script+=( "$2" )
             shift
             shift
             ;;
@@ -134,6 +146,7 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
 
 trap cleanup EXIT
 
