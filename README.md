@@ -14,7 +14,7 @@ It is meant to simplify your backend development workflow by eliminating the nee
 
 ## Prerequisites
 
-This Bash requires you have Docker installed and preconfigured (you should be in the `docker` group, for example). 
+This Bash script requires you have Docker installed and preconfigured (you should be in the `docker` group, for example). 
 It also requires you have the PostgreSQL client tool (`psql`) installed. 
 
 ## Installation
