@@ -3,11 +3,13 @@ set -e
 set -u
 
 init_script=()
-password=password
 tmp_directory=/tmp/devpg-$$/
 port=15432
-mount_directory=/docker-entrypoint-initdb.d
-container_id=
+distro=
+pg_executable_dir=
+initdb_exe=
+pg_ctl_exe=
+createdb_exe=
 
 usage () {
     cat <<'END'
@@ -18,15 +20,54 @@ Usage:
 
 Options:
     -h, --help
+    -x, --pg-executable-dir=DIR  postgres executable dir like /usr/lib/postgres/12
     -i, --init-script=FILENAME   initialize the database with some sql
                                  (may be repeated)
     -p, --port=INT               local port (default: 15432)
-    -P, --password=STRING        database password (default: password)
     -t, --tmp-directory=DIRNAME  temporary directory (default: /tmp/devpg-$PID)
 
 For more info: https://github.com/tnishimura/devpg
 END
     exit 1
+}
+
+determine_distro () {
+    id_like=`grep "^ID_LIKE" /etc/os-release`
+    if [[ -z $id_like ]] 
+    then
+        
+        exit 1
+    fi
+    if grep -q debian <<< "$id_like" 2> /dev/null 
+    then
+        distro=debian
+    fi
+    if grep -q suse <<< "$id_like" 2> /dev/null 
+    then
+        distro=suse
+    fi
+}
+
+find_exes () {
+    # on suse: /usr/lib/postgresql##/bin/initdb
+    # on ubuntu: /usr/lib/postgresql/##/bin/initdb
+    # on redhat: 
+
+    major_versions=( 15 14 13 12 11 10 9 8 7 )
+
+    for v in "${major_versions[@]}" 
+    do 
+        [[ $distro == "debian" ]] && d="/usr/lib/postgresql/$v"
+        [[ $distro == "suse"   ]] && d="/usr/lib/postgresql$v"
+
+        if [[ -d "$d" && -f "$d/bin/initdb" && -f "$d/bin/pg_ctl" ]]
+        then
+            initdb_exe="$d/bin/initdb"
+            pg_ctl_exe="$d/bin/pg_ctl"
+            createdb_exe="$d/bin/createdb"
+            break
+        fi
+    done
 }
 
 preflight_checks () {
@@ -39,10 +80,24 @@ preflight_checks () {
         fi
     done 
 
-    # check that docker is available
-    if ! hash docker 2> /dev/null
+    if [[ -z $pg_executable_dir ]] 
     then
-        echo "docker not found"
+        determine_distro
+        if [[ -z $distro ]] 
+        then
+            echo "Could not determine distro? please specify initdb manually with -I"
+            exit 1
+        fi
+        find_exes
+    else
+        initdb_exe="$pg_executable_dir/bin/initdb"
+        pg_ctl_exe="$pg_executable_dir/bin/pg_ctl"
+        createdb_exe="$pg_executable_dir/bin/createdb"
+    fi
+
+    if [[ ! -f $initdb_exe ]] || [[ ! -f $pg_ctl_exe ]] || [[ ! -f $createdb_exe ]]
+    then
+        echo "cannot find suitable initdb/pg_ctl/createdb, please specify postgresql executables dir with -x"
         exit 1
     fi
 
@@ -50,68 +105,65 @@ preflight_checks () {
     if ! hash psql 2> /dev/null
     then
         echo "psql not found, please install it"
-        echo "On CentOS: yum install postgresql"
-        echo "On Debian/Ubuntu: apt install postgresql-client"
-        echo "On Arch: pacman -S postgresql"
         exit 1
     fi
+
+    echo "using $initdb_exe and $pg_ctl_exe"
+
+    db_dir=$tmp_directory/db
+    socket_dir=$tmp_directory/run
+    log_file=$tmp_directory/log
 }
 
-setup_init_script () {
-    if [[ ${#init_script[@]} > 0 ]] 
-    then
-        echo "Setting up init script (in $tmp_directory)..."
-        mkdir -p $tmp_directory
-        cat <<'END' > $tmp_directory/init.sh
-#!/bin/bash
-set -e
-END
-
-        counter=1
-        for s in ${init_script[@]}
-        do
-            cp $s $tmp_directory/init-$counter.sql
-            cat <<END >> $tmp_directory/init.sh
-psql -v ON_ERROR_STOP=1 --username "postgres" --dbname "postgres" /docker-entrypoint-initdb.d/init-$counter.sql
-END
-            counter=$((counter+1))
-        done 
-    fi
+run_initdb () {
+    mkdir -p $tmp_directory
+    echo "Running $initdb_exe -D \"$tmp_directory/db\""
+    $initdb_exe -D $tmp_directory/db
 }
 
-start_container () {
-    echo "Starting postgresql container..."
-    volume=""
-    if [[ ${#init_script[@]} > 0 ]] 
-    then
-        volume="-v $tmp_directory:$mount_directory"
-    fi
-    container_id=`docker run -d -e POSTGRES_PASSWORD=$password -p $port:5432 $volume postgres`
+start_postgresql () {
+    echo "Starting"
+    mkdir -p $socket_dir
+    # -o option gets passed to postgres binary, see 'man postgres'
+    # -p is for port, -k is equiv to setting unix_socket_directory
+    $pg_ctl_exe \
+        -l $log_file \
+        -D $db_dir \
+        -o "-p $port -k \"$socket_dir\" " \
+        start || (
+        cat $log_file
+        exit 1
+    )
+    $createdb_exe -p $port -h $socket_dir $USER
     
-    if [[ $? -ne 0 ]]
-    then
-        echo "Failed to launch postgres container, maybe port in use? Output:"
-        echo $container_id
-        # clear it so cleanup doesn't try to remove containers that weren't created
-        container=
-        exit 1
-    fi
+    for s in ${init_script[@]}
+    do
+        echo $s
+        psql \
+            -v ON_ERROR_STOP=1 \
+            -p $port \
+            -h $socket_dir \
+            -f $s 
+    done
 }
 
 cleanup () {
-    if [[ -n $container_id ]]
+    $pg_ctl_exe \
+        -D $db_dir \
+        stop || (
+        cat $log_file
+        exit 1
+    )
+
+    if [[ -d $tmp_directory ]]
     then
-        echo "removing container..."
-        docker container stop $container_id  > /dev/null
-        docker container rm $container_id > /dev/null
+        echo "removing $tmp_directory"
+        rm -rf "$tmp_directory"
     fi
 }
 
 connect_with_psql () {
-    export PGPASSWORD=$password
-    echo "Sleeping 5 seconds to give time for docker pg to start..."
-    sleep 5
-    psql -h localhost -p $port -U postgres postgres
+    psql -h $socket_dir -p $port 
 }
 
 while [[ $# -gt 0 ]]; do
@@ -121,8 +173,8 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             usage
             ;;
-        -P|--password)
-            password="$2"
+        -x|--pg-executable-dir)
+            pg_executable_dir="$2"
             shift
             shift
             ;;
@@ -151,7 +203,7 @@ done
 trap cleanup EXIT
 
 preflight_checks
-setup_init_script
-start_container
+run_initdb
+start_postgresql
 connect_with_psql
 
