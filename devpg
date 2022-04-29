@@ -3,7 +3,7 @@ set -e
 set -u
 
 init_script=()
-tmp_directory=/tmp/devpg-$$/
+tmp_directory=/tmp/devpg-$$
 port=15432
 distro=
 pg_executable_dir=
@@ -138,13 +138,32 @@ start_postgresql () {
     
     for s in ${init_script[@]}
     do
-        echo $s
         psql \
             -v ON_ERROR_STOP=1 \
             -p $port \
             -h $socket_dir \
             -f $s 
     done
+}
+
+info () {
+    cat <<END
+************************************************************************
+
+A dev instance of Postgresql has been started.
+A username and database named '$USER' has been created.
+devpg will now open a psql session to the instance.
+
+You can also connect to the dev instance manually using:
+
+    psql -p $port -h $socket_dir # using unix-domain-socket
+    psql -p $port -h 127.0.0.1 # using tcp
+
+The Postgresql database directory for this instance is located at:
+    $db_dir
+
+************************************************************************
+END
 }
 
 cleanup () {
@@ -205,5 +224,6 @@ trap cleanup EXIT
 preflight_checks
 run_initdb
 start_postgresql
+info
 connect_with_psql
 
