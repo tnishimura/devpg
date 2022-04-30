@@ -4,7 +4,7 @@ Launch a temporary, development instance of PostgreSQL on demand.
 
 ## Introduction
 
-`devpg` is a small script which:
+`devpg` is a small Bash script which:
 * creates a new PostgreSQL database directory with init
 * start a new PostgreSQL server instance 
 * initializes the database with optional SQL scripts
@@ -33,6 +33,7 @@ To install, simply place the `devpg` script somewhere in your `$PATH`.
                                      (may be repeated)
         -p, --port=INT               local port (default: 15432)
         -t, --tmp-directory=DIRNAME  temporary directory (default: /tmp/devpg-$PID)
+        -k, --keep-directory         don't delete temp dir on exit
 
 At its most basic, running `devpg` without any arguments will create an instance of PostgreSQL and opens a `psql` session to the instance for you.
 You can also connect to the instance from any application on localhost with the connection string specified.
@@ -55,11 +56,11 @@ And some sample data in `sample/data.sql`:
     insert into your_awesome_table (first_name, last_name) 
     values ('Ada', 'Lovelace'), ('Charles', 'Babbage');
 
-You can them run this script as:
+You can then run this script as:
 
     devpg -i sample/schema.sql -i sample/data.sql 
 
-This will automatically launch an instance of postgres in a container and open a psql session. You'll also be able to connect to the instance with any other client (for example, your application server on localhost with the port and password specified.)
+This will automatically launch an instance of PostgreSQL and open a psql session. You'll also be able to connect to the instance with any other client (for example, your application server on localhost with the port and password specified.)
 
 # License
 

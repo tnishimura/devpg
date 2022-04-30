@@ -5,6 +5,7 @@ set -u
 init_script=()
 tmp_directory=/tmp/devpg-$$
 port=15432
+keep_dir=0
 distro=
 pg_executable_dir=
 initdb_exe=
@@ -25,6 +26,7 @@ Options:
                                  (may be repeated)
     -p, --port=INT               local port (default: 15432)
     -t, --tmp-directory=DIRNAME  temporary directory (default: /tmp/devpg-$PID)
+    -k, --keep-directory         don't delete temp dir on exit
 
 For more info: https://github.com/tnishimura/devpg
 END
@@ -33,7 +35,7 @@ END
 
 determine_distro () {
     id_like=`grep "^ID_LIKE" /etc/os-release`
-    if [[ -z $id_like ]] 
+    if [[ -z "$id_like" ]] 
     then
         
         exit 1
@@ -51,7 +53,6 @@ determine_distro () {
 find_exes () {
     # on suse: /usr/lib/postgresql##/bin/initdb
     # on ubuntu: /usr/lib/postgresql/##/bin/initdb
-    # on redhat: 
 
     major_versions=( 15 14 13 12 11 10 9 8 7 )
 
@@ -73,17 +74,17 @@ find_exes () {
 preflight_checks () {
     for s in ${init_script[@]}
     do
-        if [[ -n $s ]] && [[ ! -f $s ]] 
+        if [[ -n "$s" ]] && [[ ! -f "$s" ]] 
         then
             echo "Cannot find initialization script file $s"
             exit 1
         fi
     done 
 
-    if [[ -z $pg_executable_dir ]] 
+    if [[ -z "$pg_executable_dir" ]] 
     then
         determine_distro
-        if [[ -z $distro ]] 
+        if [[ -z "$distro" ]] 
         then
             echo "Could not determine distro? please specify initdb manually with -I"
             exit 1
@@ -95,7 +96,7 @@ preflight_checks () {
         createdb_exe="$pg_executable_dir/bin/createdb"
     fi
 
-    if [[ ! -f $initdb_exe ]] || [[ ! -f $pg_ctl_exe ]] || [[ ! -f $createdb_exe ]]
+    if [[ ! -f "$initdb_exe" ]] || [[ ! -f "$pg_ctl_exe" ]] || [[ ! -f "$createdb_exe" ]]
     then
         echo "cannot find suitable initdb/pg_ctl/createdb, please specify postgresql executables dir with -x"
         exit 1
@@ -174,10 +175,12 @@ cleanup () {
         exit 1
     )
 
-    if [[ -d $tmp_directory ]]
+    if [[ $keep_dir == "0" ]]
     then
         echo "removing $tmp_directory"
         rm -rf "$tmp_directory"
+    else
+        echo "not removing $tmp_directory because --keep-directory was specified"
     fi
 }
 
@@ -210,6 +213,10 @@ while [[ $# -gt 0 ]]; do
         -t|--tmp-directory)
             tmp_directory="$2"
             shift 
+            shift
+            ;;
+        -k|--keep-dir|--keep-directory)
+            keep_dir=1
             shift
             ;;
         *)    
